@@ -1,3 +1,4 @@
+import json
 import argparse
 import os
 from IdentifyPotentialConversions import check_differences
@@ -468,7 +469,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
     HDF5_dict= check_differences(args.beamline, args.year, args.visit, args.folder)
     to_convert = HDF5_dict['MIB_to_convert']
-    print('to convert', to_convert)
+    print('to convert', json.dumps(HDF5_dict, indent=4))
+
+    exit(0)
 
     try:
         if args.folder is not None:
