@@ -3,7 +3,7 @@
 #$ -cwd
 #$ -q high.q
 #$ -l redhat_release=rhel7
-#$ -l m_mem_free=200G
+#$ -l m_mem_free=80G
 
 echo "I am task $SGE_TASK_ID"
 

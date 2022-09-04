@@ -2,6 +2,7 @@
 This script is to perform batch parallel mib to hdf5 conversion on the DLS cluster
 
 Example of use in DLS Linux terminal:
+    module load python/epsic3.7
     python batch_convert_cluster.py e02 2019 mg25124-2
 or with a specific folder option:
     python batch_convert_cluster.py e02 2019 cm22979-6 -folder Merlin/20191022_hot_graphene
@@ -36,7 +37,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     #maximum number of jobs to run concurrently
-    max_c = 10
+    max_c = 4
 
 
 

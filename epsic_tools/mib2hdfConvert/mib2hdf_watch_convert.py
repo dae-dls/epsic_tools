@@ -12,6 +12,9 @@ import hyperspy.api as hs
 import pyxem as pxm
 import numpy as np
 import h5py
+import shutil
+
+print(pxm.__file__)
 
 hs.preferences.GUIs.warn_if_guis_are_missing = False
 hs.preferences.save()
@@ -136,18 +139,14 @@ def convert(beamline, year, visit, mib_to_convert, folder=None):
 
     t0 = time.time()
     # Define processing path in which to save outputs
-
+    raw_path = os.path.join('/dls',beamline,'data', year, visit, 'Merlin')
     proc_location = os.path.join('/dls',beamline,'data', year, visit, 'processing', 'Merlin')
     if not os.path.exists(proc_location):
         os.mkdir(proc_location)
 
-    # Get the raw data folders and assign as a set
-    data_folders = []
-    for path in mib_to_convert:
-        data_folders.append(os.path.join(*path.split('/')[:-1]))
-    data_folders_set = set(data_folders)
-    # Loop over all data folders
-    for mib_path in list(data_folders_set):
+
+    for mib_path in mib_to_convert:
+        mib_path = os.path.dirname(mib_path)
 
         print('********************************************************')
         print('Currently active in this directory: %s' % mib_path.split('/')[-1])
@@ -166,13 +165,13 @@ def convert(beamline, year, visit, mib_to_convert, folder=None):
             # Load the .mib file and determine whether it contains TEM or STEM
             # data based on frame exposure times.
             try:
-                print(mib_path)
+                print('mib path ', mib_path)
 
                 depth = get_mib_depth(hdr_info, hdr_info['title'] + '.mib')
                 print('number of frames: ', depth)
                 # Only write the h5 stack for large scan arrays
 #                if (depth > 300*300) or (hdr_info['Counter Depth (number)'] > 8):
-                if (depth > 600*600):
+                if (depth > 300*300):
                     print('large file 4DSTEM file - first saving the stack into h5 file!')
 
                     merlin_ind = hdr_info['title'].split('/').index('Merlin')
@@ -187,7 +186,7 @@ def convert(beamline, year, visit, mib_to_convert, folder=None):
                     dp = pxm.load_mib(hdr_info['title'] + '.mib')
                 print(dp)
                 pprint.pprint(dp.metadata)
-                dp.compute(progressbar = False)
+                dp.compute(show_progressbar = False)
                 t1 = time.time()
                 if dp.metadata.Signal.signal_type == 'electron_diffraction':
                     STEM_flag = True
@@ -221,16 +220,23 @@ def convert(beamline, year, visit, mib_to_convert, folder=None):
             # This reshapes to the correct navigation dimensions and
             else:
                 # Define save path for STEM data
-                merlin_ind = hdr_info['title'].split('/').index('Merlin')
-                saving_path = proc_location +'/'+ os.path.join(*hdr_info['title'].split('/')[(merlin_ind+1):-1])
-                print(saving_path)
+                if folder:
+                    if os.path.split(folder)[0]=='Merlin':
+                        folder = folder[(folder.index('/') + 1):]
+                    saving_path = os.path.join(proc_location, folder, get_timestamp(mib_path))
+                    if not os.path.exists(saving_path):
+                        os.makedirs(saving_path)
+                
+                else:
+                    saving_path = os.path.join(proc_location, get_timestamp(mib_path))
+                print('saving path: ', saving_path)
                 if not os.path.exists(saving_path):
                      os.makedirs(saving_path)
 
 
-                # Bin by factor of 4 in diffraction and navigation planes
-                dp_bin_sig = bin_sig(dp,4)
-                dp_bin_nav = bin_nav(dp,4)
+                # Bin by factor of 2 in diffraction and navigation planes
+                dp_bin_sig = bin_sig(dp,2)
+                dp_bin_nav = bin_nav(dp,2)
                 
                 # Calculate sum of binned data
 
@@ -275,13 +281,29 @@ def convert(beamline, year, visit, mib_to_convert, folder=None):
                 print('Saved binned navigation data: binned_' + get_timestamp(mib_path) + '.hdf5')
                 del dp_bin_nav
 #                 # Save complete .hdf5 files
-                print('Saving hdf5 : ' + get_timestamp(mib_path) +'.hdf5')
-                dp.save(saving_path + '/' + get_timestamp(mib_path), extension = 'hdf5')
-                print('Saved hdf5 : ' + get_timestamp(mib_path) +'.hdf5')
+                print('Saving hdf5 : ' + get_timestamp(mib_path) +'_data.hdf5')
+                dp.save(saving_path + '/' + get_timestamp(mib_path) + '_data', extension = 'hdf5')
+                print('Saved hdf5 : ' + get_timestamp(mib_path) +'_data.hdf5')
                 tmp = []
                 np.savetxt(saving_path+'/' + get_timestamp(mib_path) + 'fully_saved', tmp)
+                # Adding mask to hdf5
+                
+                mask_file = '/dls_sw/e02/medipix_mask/200keV_man_mask.h5'
+                mask_key = '/data/mask'
+                
+                with h5py.File(mask_file, 'r') as f:
+                    mask = f[mask_key][:]
+                
+                
+                with h5py.File(saving_path + '/' + get_timestamp(mib_path) + '_data.hdf5', 'r+', libver='latest') as f:
+                    mask_group = f.create_group('/mask')
+                    mask_group['data_200kV'] = mask
+                
+                
                 t3 = time.time()
-                write_vds(saving_path + '/' + get_timestamp(mib_path) + '.hdf5', saving_path + '/' + get_timestamp(mib_path) + '_vds.h5')
+                meta_path = find_metadat_file(get_timestamp(mib_path), raw_path)
+                print('metadata path: ', meta_path)
+                write_vds(saving_path + '/' + get_timestamp(mib_path) + '_data.hdf5', saving_path + '/' + get_timestamp(mib_path) + '_vds.h5', metadata_path=meta_path)
 
                 del dp
                 gc.collect()
@@ -311,7 +333,7 @@ def convert(beamline, year, visit, mib_to_convert, folder=None):
                 else:
                     STEM_flag = False
 
-                dp.compute(progressbar=False)
+                dp.compute(show_progressbar = False)
 
                 t1 = time.time()
 
@@ -354,33 +376,82 @@ def data_dim(data):
 
 
 def get_timestamp(mib_path):
-    time_id = mib_path.split('/')[-1]
-    return time_id.replace(' ', '_')
+    for file in os.listdir(mib_path):
+        if file.endswith('mib'):
+            time_id = file.split('.')[0]
+    return time_id[:-5]
 
-def write_vds(source_h5_path, writing_h5_path, entry_key='Experiments/__unnamed__/data', vds_key = '/data/frames'):
-    try:
-        with h5py.File(source_h5_path,'r') as f:
-            vsource = h5py.VirtualSource(f[entry_key])
-            sh = vsource.shape
-            print("4D shape:", sh)
-    except KeyError:
-        print('Key provided for the input data file not correct')
-        return
-    layout = h5py.VirtualLayout(shape=tuple((np.prod(sh[:2]), sh[-2], sh[-1])), dtype = np.float)
-    for i in range(sh[0]):
-        for j in range(sh[1]):
-            layout[i * sh[1] + j] = vsource[i, j, :, :]
+def write_vds(source_h5_path, writing_h5_path, entry_key='Experiments/__unnamed__/data', vds_key = '/data/frames', metadata_path = ''):
+    if metadata_path is None:
+        try:
+            with h5py.File(source_h5_path,'r') as f:
+                vsource = h5py.VirtualSource(f[entry_key])
+                sh = vsource.shape
+                print("4D shape:", sh)
+        except KeyError:
+            print('Key provided for the input data file not correct')
+            return
+    
+        layout = h5py.VirtualLayout(shape=tuple((np.prod(sh[:2]), sh[-2], sh[-1])), dtype = np.uint16)
+        for i in range(sh[0]):
+            for j in range(sh[1]):
+                layout[i * sh[1] + j] = vsource[i, j, :, :]
+            
+        with h5py.File(writing_h5_path, 'w', libver='latest') as f:
+            f.create_virtual_dataset(vds_key, layout)
+    else:
+        # copy over the metadata file
+        src_path = metadata_path
+        dest_path = os.path.dirname(writing_h5_path)
+        shutil.copy(src_path, dest_path)
         
-    with h5py.File(writing_h5_path, 'w', libver='latest') as f:
-        f.create_virtual_dataset(vds_key, layout)
+        # Open the metadata dest file and add links
+        try:
+            with h5py.File(source_h5_path,'r') as f:
+                vsource = h5py.VirtualSource(f[entry_key])
+                sh = vsource.shape
+                print("4D shape:", sh)
+        except KeyError:
+            print('Key provided for the input data file not correct')
+            return
+    
+        layout = h5py.VirtualLayout(shape=tuple((np.prod(sh[:2]), sh[-2], sh[-1])), dtype = np.uint16)
+        for i in range(sh[0]):
+            for j in range(sh[1]):
+                layout[i * sh[1] + j] = vsource[i, j, :, :]
+        print('Adding vds to: ', os.path.join(dest_path, os.path.basename(metadata_path)))    
+        with h5py.File(os.path.join(dest_path, os.path.basename(metadata_path)), 'r+', libver='latest') as f:
+            f.create_virtual_dataset(vds_key, layout)
+            f['/data/mask'] = h5py.ExternalLink('/dls_sw/e02/medipix_mask/200keV_man_mask.h5', "/data/mask")
+            f['metadata']['4D_shape'] = tuple(sh)
+        
     return
         
-
+def find_metadat_file(timestamp, acquisition_path):
+    metadata_file_paths = []
+    mib_file_paths = []
+        
+    for root, folders, files in os.walk(acquisition_path):
+        for file in files:
+            if file.endswith('hdf'):
+                metadata_file_paths.append(os.path.join(root, file))
+            elif file.endswith('mib'):
+                mib_file_paths.append(os.path.join(root, file))
+    for path in metadata_file_paths:
+        if timestamp == path.split('/')[-1].split('.')[0]:
+            return path
+    print('No metadata file could be matched.')
+    return 
+    
 
 if __name__ == "__main__":
-    #from distributed import Client, LocalCluster
-    #cluster = LocalCluster(n_workers =20, memory_limit = 100e9)
-    #client = Client(cluster)
+
+    # added by Mihai Duta (7 Dec 2021) -- begin
+    from multiprocessing.pool import ThreadPool
+    import dask
+    dask.config.set(pool=ThreadPool(4))
+    # added by Mihai Duta (7 Dec 2021) -- end
+
     parser = argparse.ArgumentParser()
     parser.add_argument('beamline', help='Beamline name')
     parser.add_argument('year', help='Year')
@@ -397,23 +468,13 @@ if __name__ == "__main__":
     args = parser.parse_args()
     HDF5_dict= check_differences(args.beamline, args.year, args.visit, args.folder)
     to_convert = HDF5_dict['MIB_to_convert']
-    print(to_convert)
+    print('to convert', to_convert)
 
     try:
         if args.folder is not None:
-            save_location = os.path.join('/dls',args.beamline,'data', args.year, args.visit, 'processing', args.folder)
-            if os.path.exists(save_location) == False:
-                os.makedirs(save_location)
-            print(to_convert[int(args.folder_num)-1])
-            print(args.folder)
             convert(args.beamline, args.year, args.visit, [to_convert[int(args.folder_num)-1]], folder=args.folder)
-            
-
-                
         else:
-            save_location = os.path.join('/dls',args.beamline,'data', args.year, args.visit, 'processing')
-            if os.path.exists(save_location) == False:
-                os.makedirs(save_location)
+
             convert(args.beamline, args.year, args.visit, [to_convert[int(args.folder_num)-1]])
 
     except Exception as e:
